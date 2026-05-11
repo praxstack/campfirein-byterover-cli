@@ -4,7 +4,6 @@
 #
 # Configures ByteRover as long-term memory for OpenClaw agents:
 #   - Automatic Memory Flush (context compaction)
-#   - Daily Knowledge Mining (cron job)
 #   - ByteRover Context Plugin (hook-based injection)
 #   - Workspace protocol updates (AGENTS.md, TOOLS.md)
 
@@ -13,7 +12,6 @@ set -eu
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 CONFIG_PATH="$HOME/.openclaw/openclaw.json"
-ONBOARDING_PLUGIN_DIR="$HOME/.openclaw/extensions/byterover-onboarding"
 
 # ─── Colors (respects NO_COLOR and non-terminal) ─────────────────────────────
 
@@ -152,7 +150,7 @@ check_brv_cli() {
   elif [ -x "/usr/local/bin/brv" ]; then
     BRV_CMD="/usr/local/bin/brv"
   else
-    info "ByteRover CLI not found. Installing..."
+    info "ByteRover CLI not found. Installing from https://byterover.dev/install.sh..."
     if curl -fsSL https://byterover.dev/install.sh | sh; then
       BRV_CMD="$HOME/.brv-cli/bin/brv"
     else
@@ -252,69 +250,6 @@ remove_memory_flush_config() {
   '
 }
 
-enable_onboarding_plugin_in_config() {
-  CONFIG_PATH="$CONFIG_PATH" node -e '
-    const fs = require("fs");
-    const configPath = process.env.CONFIG_PATH;
-    try {
-        const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-        config.plugins = config.plugins || {};
-        config.plugins.entries = config.plugins.entries || {};
-        config.plugins.entries["byterover-onboarding"] = { enabled: true };
-        // Register extension load path
-        config.plugins.load = config.plugins.load || {};
-        config.plugins.load.paths = config.plugins.load.paths || [];
-        const onboardPath = "~/.openclaw/extensions/byterover-onboarding";
-        if (!config.plugins.load.paths.includes(onboardPath)) {
-            config.plugins.load.paths.push(onboardPath);
-        }
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-        console.log("Onboarding plugin enabled in config.");
-    } catch (e) {
-        console.error("Failed to update config for onboarding plugin:", e);
-        process.exit(1);
-    }
-  '
-}
-
-disable_onboarding_plugin_in_config() {
-  CONFIG_PATH="$CONFIG_PATH" node -e '
-    const fs = require("fs");
-    const configPath = process.env.CONFIG_PATH;
-    try {
-        const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-        const entries = config.plugins?.entries;
-        if (!entries || !entries["byterover-onboarding"]) {
-            console.log("No onboarding plugin config found.");
-            process.exit(0);
-        }
-        delete entries["byterover-onboarding"];
-        // Also remove from load paths
-        if (Array.isArray(config.plugins?.load?.paths)) {
-            config.plugins.load.paths = config.plugins.load.paths.filter(p => p !== "~/.openclaw/extensions/byterover-onboarding");
-            if (config.plugins.load.paths.length === 0) delete config.plugins.load.paths;
-            if (config.plugins.load && Object.keys(config.plugins.load).length === 0) delete config.plugins.load;
-        }
-        if (Object.keys(entries).length === 0) delete config.plugins.entries;
-        if (config.plugins && Object.keys(config.plugins).length === 0) delete config.plugins;
-        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-        console.log("Onboarding plugin disabled in config.");
-    } catch (e) {
-        console.error("Failed to remove onboarding plugin config:", e);
-        process.exit(1);
-    }
-  '
-}
-
-remove_onboarding_plugin_files() {
-  if [ -d "$ONBOARDING_PLUGIN_DIR" ]; then
-    rm -rf "$ONBOARDING_PLUGIN_DIR"
-    success "Removed onboarding plugin files from $ONBOARDING_PLUGIN_DIR"
-  else
-    echo "No onboarding plugin files found."
-  fi
-}
-
 list_workspaces() {
   CONFIG_PATH="$CONFIG_PATH" node -e '
     const fs = require("fs");
@@ -361,7 +296,7 @@ verify_plugin_installed() {
 ensure_plugin_active() {
   local plugin_list
   plugin_list=$(openclaw plugins list 2>/dev/null) || plugin_list=""
-  if ! echo "$plugin_list" | grep -qw "byterover" && ! echo "$plugin_list" | grep -qw "byterover-onboarding"; then
+  if ! echo "$plugin_list" | grep -qw "byterover"; then
     warn "No ByteRover plugin appears to be active."
     warn "Run 'openclaw plugins list' to check status, or 'openclaw plugins doctor' to diagnose."
   fi
@@ -653,9 +588,6 @@ print_success() {
   echo ""
   echo "To see all available providers:  brv providers list"
   echo ""
-  if [ ! -f "$ONBOARDED_MARKER" ] && [ -d "$ONBOARDING_PLUGIN_DIR" ]; then
-    echo "Start a new conversation with your agent to begin the onboarding walkthrough."
-  fi
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -686,8 +618,7 @@ main() {
   configure_context_plugin
   info "--- Curate Story Options ---"
   configure_memory_flush
-  info "--- Onboarding Options ---"
-  
+
   ensure_plugin_active
 
   # Phase 3: Workspace Updates
